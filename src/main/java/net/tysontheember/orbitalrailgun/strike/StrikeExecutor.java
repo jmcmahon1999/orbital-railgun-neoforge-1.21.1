@@ -20,9 +20,7 @@ import org.jetbrains.annotations.Nullable;
 
 @Mod.EventBusSubscriber(modid = ForgeOrbitalRailgunMod.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class StrikeExecutor {
-    private static final LongArrayFIFOQueue QUEUE = new LongArrayFIFOQueue();
-    private static final LongOpenHashSet SEEN = new LongOpenHashSet();
-    private static ServerLevel LEVEL;
+    private static final java.util.ArrayDeque<StrikeWork> ACTIVE = new java.util.ArrayDeque<>();
 
     private StrikeExecutor() {}
 
@@ -43,78 +41,87 @@ public final class StrikeExecutor {
     }
 
     public static void begin(ServerLevel level, BlockPos impactCenter, double diameter) {
-        LEVEL = level;
-        QUEUE.clear();
-        SEEN.clear();
-
         final double radius = Math.max(0.0, diameter * 0.5);
         final int r = (int) Math.ceil(radius);
 
         final int minY = level.getMinBuildHeight();
         final int maxY = level.getMaxBuildHeight() - 1;
-        final int topY = maxY; // we enqueue everything; filterAllowed will prune to claims/depth
 
-        for (int y = topY; y >= minY; --y) {
+        StrikeWork work = new StrikeWork(level);
+
+        for (int y = maxY; y >= minY; --y) {
             final int baseX = impactCenter.getX();
             final int baseZ = impactCenter.getZ();
             for (int dx = -r; dx <= r; ++dx) {
                 for (int dz = -r; dz <= r; ++dz) {
                     if (dx * dx + dz * dz <= radius * radius) {
                         long key = BlockPos.asLong(baseX + dx, y, baseZ + dz);
-                        if (SEEN.add(key)) {
-                            QUEUE.enqueue(key);
+                        if (work.seen.add(key)) {
+                            work.queue.enqueue(key);
                         }
                     }
                 }
             }
         }
+        ACTIVE.addLast(work);
     }
 
 
     public static void filterAllowed(LongSet allowed) {
-        if (LEVEL == null) return;
+        StrikeWork work = ACTIVE.peekLast();
+        if (work == null) return;
 
         LongArrayList ordered = new LongArrayList();
-        while (!QUEUE.isEmpty()) {
-            long key = QUEUE.dequeueLong();
-            if (allowed.contains(key)) {
-                ordered.add(key);
-            }
+        while (!work.queue.isEmpty()) {
+            long key = work.queue.dequeueLong();
+            if (allowed.contains(key)) ordered.add(key);
         }
-        QUEUE.clear();
-        SEEN.clear();
+        work.queue.clear();
+        work.seen.clear();
         for (long key : ordered) {
-            if (SEEN.add(key)) {
-                QUEUE.enqueue(key);
-            }
+            if (work.seen.add(key)) work.queue.enqueue(key);
         }
     }
 
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent e) {
-        if (e.phase != TickEvent.Phase.END || LEVEL == null) return;
-        if (QUEUE.isEmpty()) { LEVEL = null; return; }
+        if (e.phase != TickEvent.Phase.END) return;
+        StrikeWork work = ACTIVE.peekFirst();
+        if (work == null) return;
+        if (work.queue.isEmpty()) { ACTIVE.removeFirst(); return; }
 
         int budget = OrbitalConfig.BLOCKS_PER_TICK.get();
         boolean drop = OrbitalConfig.DROP_BLOCKS.get();
 
         boolean allowUnbreakables = OrbitalConfig.MAX_BREAK_HARDNESS.get() < 0.0D;
 
-        for (int i = 0; i < budget && !QUEUE.isEmpty(); i++) {
-            long key = QUEUE.dequeueLong();
+        for (int i = 0; i < budget && !work.queue.isEmpty(); i++) {
+            long key = work.queue.dequeueLong();
             BlockPos pos = BlockPos.of(key);
 
-            if (!LEVEL.isLoaded(pos)) continue; // avoid force-loading
-            BlockState state = LEVEL.getBlockState(pos);
+            if (!work.level.isLoaded(pos)) continue; // avoid force-loading
+            BlockState state = work.level.getBlockState(pos);
             if (state.isAir()) continue;
 
-            if (!allowUnbreakables && state.getDestroySpeed(LEVEL, pos) < 0) continue;
+            if (!allowUnbreakables && state.getDestroySpeed(work.level, pos) < 0) continue;
 
-            if (drop) {
-                LEVEL.destroyBlock(pos, true, null); // heavier (loot, entities)
+            boolean isFluid = !state.getFluidState().isEmpty();
+            if (drop && !isFluid) {
+                work.level.destroyBlock(pos, true, null); // heavier (loot, entities)
             } else {
-                LEVEL.setBlock(pos, Blocks.AIR.defaultBlockState(), 2); // UPDATE_CLIENTS; lighter
+                // For fluids (and when not dropping), just vaporize to avoid bucket loot attempts
+                work.level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3); // block update + clients
             }
+        }
+    }
+
+    private static final class StrikeWork {
+        final ServerLevel level;
+        final LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+        final LongOpenHashSet seen = new LongOpenHashSet();
+
+        StrikeWork(ServerLevel level) {
+            this.level = level;
         }
     }
 }

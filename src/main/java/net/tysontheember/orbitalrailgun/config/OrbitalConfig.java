@@ -42,7 +42,7 @@ public final class OrbitalConfig {
             .defineInRange("cooldown", 2400, 1800, Integer.MAX_VALUE);
         STRIKE_DAMAGE = builder
             .comment("Damage of the Orbital Strike")
-            .defineInRange("strikeDamage", Integer.MAX_VALUE, 0, Integer.MAX_VALUE);
+            .defineInRange("strikeDamage", 80, 0, Integer.MAX_VALUE);
         BLACKLISTED_BLOCKS = builder
             .comment("Blocks that won't be destroyed by the orbital strike.")
             .defineList("blacklistedBlocks", List.of(

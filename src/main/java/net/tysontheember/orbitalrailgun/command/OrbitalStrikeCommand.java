@@ -79,7 +79,7 @@ public final class OrbitalStrikeCommand {
                 source.getTextName(), x, z, surfaceY, power, radius);
         LOGGER.info(logMessage);
 
-        if (!OrbitalRailgunStrikeManager.StrikeRequestResult.ok().success()) {
+        if (!result.success()) {
             Component error = result.message();
             if (error != null) {
                 source.sendFailure(error);

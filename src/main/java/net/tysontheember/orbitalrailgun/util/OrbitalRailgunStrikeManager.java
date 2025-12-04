@@ -132,19 +132,21 @@ public final class OrbitalRailgunStrikeManager {
             }
         }
 
-        scheduleStrike(level, target, shooter, normalizedRadius, normalizedMultiplier);
+        boolean claimsPrevalidated = validateClaims && areClaimsEnforced();
+
+        scheduleStrike(level, target, shooter, normalizedRadius, normalizedMultiplier, claimsPrevalidated);
         return StrikeRequestResult.ok();
     }
 
     private static void scheduleStrike(ServerLevel level, BlockPos target, @Nullable ServerPlayer shooter,
-                                       double radius, float damageMultiplier) {
+                                       double radius, float damageMultiplier, boolean claimsPrevalidated) {
         double trackedExtent = Math.max(radius * 4.0D, 128.0D);
         List<Entity> tracked = new ArrayList<>(level.getEntities(null,
                 AABB.ofSize(Vec3.atCenterOf(target), trackedExtent, trackedExtent, trackedExtent)));
         StrikeKey key = new StrikeKey(level.dimension(), target.immutable());
         UUID shooterId = shooter != null ? shooter.getUUID() : null;
         int tickCount = level.getServer().getTickCount();
-        ACTIVE_STRIKES.put(key, new ActiveStrike(key, tracked, tickCount, shooterId, radius, damageMultiplier));
+        ACTIVE_STRIKES.put(key, new ActiveStrike(key, tracked, tickCount, shooterId, radius, damageMultiplier, claimsPrevalidated));
 
         if (ModSounds.RAILGUN_SHOOT.isPresent()) {
             double soundX;
@@ -237,6 +239,7 @@ public final class OrbitalRailgunStrikeManager {
         // Respect claims (same flags you already use)
         boolean respectClaims = areClaimsEnforced();
         ServerPlayer shooter = respectClaims ? resolveShooter(level, strike) : null;
+        boolean enforceClaims = respectClaims && !(shooter == null && strike.claimsPrevalidated);
 
         boolean blockedAny = false;
         BlockPos blockedPos = null;
@@ -252,7 +255,7 @@ public final class OrbitalRailgunStrikeManager {
             // precise distance check (sphere)
             if (entity.position().distanceToSqr(center) > strike.radiusSquared) continue;
 
-            if (respectClaims && !ClaimGuards.canDamageEntity(level, shooter, entity)) {
+            if (enforceClaims && !ClaimGuards.canDamageEntity(level, shooter, entity)) {
                 blockedAny = true;
                 blockedPos = entity.blockPosition().immutable();
                 continue;
@@ -265,7 +268,7 @@ public final class OrbitalRailgunStrikeManager {
             entity.hurt(source, damage);
         }
 
-        if (blockedAny) {
+        if (blockedAny && enforceClaims) {
             notifyClaimBlocked(strike, shooter, ClaimBlockType.DAMAGE, blockedPos != null ? blockedPos : strike.key.pos());
         }
     }
@@ -274,8 +277,9 @@ public final class OrbitalRailgunStrikeManager {
         BlockPos center = strike.key.pos();
         boolean respectClaims = areClaimsEnforced();
         ServerPlayer shooter = respectClaims ? resolveShooter(level, strike) : null;
+        boolean enforceClaims = respectClaims && !(shooter == null && strike.claimsPrevalidated);
 
-        if (respectClaims && !ClaimGuards.canAffectPosFromPos(level, center, level, center, shooter)) {
+        if (enforceClaims && !ClaimGuards.canAffectPosFromPos(level, center, level, center, shooter)) {
             notifyClaimBlocked(strike, shooter, ClaimBlockType.EXPLOSION, center);
             return;
         }
@@ -304,7 +308,7 @@ public final class OrbitalRailgunStrikeManager {
                     BlockState state = level.getBlockState(mutable);
                     if (state.isAir()) continue;
 
-                    if (respectClaims && !ClaimGuards.canBreakBlock(level, shooter, mutable)) {
+                    if (enforceClaims && !ClaimGuards.canBreakBlock(level, shooter, mutable)) {
                         blockedAny = true;
                         blockedPos = mutable.immutable();
                         continue;
@@ -312,6 +316,7 @@ public final class OrbitalRailgunStrikeManager {
 
                     double maxHardness = OrbitalConfig.MAX_BREAK_HARDNESS.get();
                     boolean infinite = maxHardness < 0.0D;
+                    boolean isFluid = !state.getFluidState().isEmpty();
 
                     // Always resolve ID once
                     ResourceLocation id = ForgeRegistries.BLOCKS.getKey(state.getBlock());
@@ -324,8 +329,8 @@ public final class OrbitalRailgunStrikeManager {
                         continue;
                     }
 
-                    // 2) Hardness check only applies when not infinite
-                    if (!infinite) {
+                    // 2) Hardness check only applies when not infinite and the block is not a fluid
+                    if (!infinite && !isFluid) {
                         double hardness = state.getDestroySpeed(level, mutable);
                         if (hardness > maxHardness) {
                             if (OrbitalConfig.DEBUG.get()) {
@@ -342,7 +347,7 @@ public final class OrbitalRailgunStrikeManager {
                 }
             }
         }
-        if (blockedAny) {
+        if (blockedAny && enforceClaims) {
             notifyClaimBlocked(strike, shooter, ClaimBlockType.BLOCKS, blockedPos != null ? blockedPos : center);
         }
 
@@ -392,12 +397,13 @@ public final class OrbitalRailgunStrikeManager {
         private final double radiusSquared;
         private final int horizontalRange;
         private final float damageMultiplier;
+        private final boolean claimsPrevalidated;
         private boolean blockNotified;
         private boolean explosionNotified;
         private boolean damageNotified;
 
         private ActiveStrike(StrikeKey key, List<Entity> entities, int startTick, UUID shooter, double radius,
-                             float damageMultiplier) {
+                             float damageMultiplier, boolean claimsPrevalidated) {
             this.key = key;
             this.entities = entities;
             this.startTick = startTick;
@@ -405,6 +411,7 @@ public final class OrbitalRailgunStrikeManager {
             this.radiusSquared = radius * radius;
             this.horizontalRange = Math.max(0, Mth.ceil(radius));
             this.damageMultiplier = damageMultiplier;
+            this.claimsPrevalidated = claimsPrevalidated;
         }
 
         private boolean markNotified(ClaimBlockType type) {
