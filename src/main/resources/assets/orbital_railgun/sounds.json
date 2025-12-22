@@ -1,0 +1,14 @@
+{
+  "equip": {
+    "sounds": [ { "name": "orbital_railgun:equip" } ],
+    "subtitle": "subtitles.orbital_railgun.equip"
+  },
+  "scope_on": {
+    "sounds": [ { "name": "orbital_railgun:scope_on" } ],
+    "subtitle": "subtitles.orbital_railgun.scope_on"
+  },
+  "railgun_shoot": {
+    "sounds": [ { "name": "orbital_railgun:railgun_shoot" } ],
+    "subtitle": "subtitles.orbital_railgun.railgun_shoot"
+  }
+}
