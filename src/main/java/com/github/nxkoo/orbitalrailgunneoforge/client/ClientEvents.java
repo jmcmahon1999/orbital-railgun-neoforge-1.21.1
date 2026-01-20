@@ -268,7 +268,7 @@ import java.util.Set;
         // ---- Upload uniforms and render ----
         Matrix4f projection = new Matrix4f(event.getProjectionMatrix());
         Matrix4f inverseProjection = new Matrix4f(projection).invert();
-        Matrix4f modelView = new Matrix4f(event.getPoseStack().last().pose());
+        Matrix4f modelView = new Matrix4f(event.getModelViewMatrix());
         Vec3 cameraPos = event.getCamera().getPosition();
 
         List<PostPass> passes = getPasses();
